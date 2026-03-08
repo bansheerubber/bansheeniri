@@ -246,6 +246,7 @@ impl State {
 			};
 
 			let rect = columns_to_rect.entry(column_id).or_insert(image::Rect {
+				urgent: false,
 				focused: false,
 				width: 0,
 				height: image_height,
@@ -254,6 +255,10 @@ impl State {
 			});
 
 			rect.width = rect.width.max(window.layout.tile_size.0.ceil() as i32);
+
+			if window.is_urgent {
+				rect.urgent = true;
+			}
 
 			if window.is_focused {
 				rect.focused = true;
@@ -266,7 +271,7 @@ impl State {
 		for mut rect in columns_to_rect.into_values() {
 			rect.x = x;
 			rect.width = ((rect.width as f64 * scale).floor() as i32).max(4);
-			image::draw_rectangle(&mut image, &rect, 0);
+			image::draw_rectangle(&mut image, &rect);
 
 			x += rect.width + x_padding;
 		}
