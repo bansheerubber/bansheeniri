@@ -1,10 +1,10 @@
-use std::process::exit;
-
 use anyhow::Result;
 use niri_ipc::{socket::Socket, Request};
+use std::process::exit;
 
 mod image;
 mod state;
+mod waybar;
 
 fn main() -> Result<()> {
 	let mut stream_socket = Socket::connect()?;
@@ -16,8 +16,16 @@ fn main() -> Result<()> {
 	}
 
 	let mut read_event = stream_socket.read_events();
-	while let Ok(event) = read_event() {
-		state.handle_state_update(event);
+	loop {
+		match read_event() {
+			Ok(event) => {
+				state.handle_state_update(event);
+			}
+			Err(error) => {
+				Err(error)?;
+				break;
+			},
+		}
 	}
 
 	Ok(())

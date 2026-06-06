@@ -9,11 +9,14 @@ use std::{
 	collections::{BTreeMap, HashMap, HashSet},
 	process::Command,
 	sync::{Arc, Mutex},
-	thread,
+	thread::{self, sleep},
 	time::Duration,
 };
 
-use crate::image;
+use crate::{
+	image,
+	waybar::{is_waybar_running_for_output, kill_waybar, run_waybar_for_output},
+};
 
 pub struct State {
 	windows_waiting_for_resize: HashMap<u64, (i32, i32)>,
@@ -27,30 +30,14 @@ pub struct State {
 
 impl State {
 	pub fn new() -> Result<Self> {
-		let mut socket = Socket::connect()?;
-
-		let Ok(response) = socket.send(Request::Outputs)? else {
-			bail!("Could not get outputs")
-		};
-
-		let outputs = match response {
-			Response::Outputs(outputs) => {
-				outputs
-					.into_values()
-					.fold(HashMap::new(), |mut map, output| {
-						map.insert(output.name.clone(), output);
-						map
-					})
-			}
-			_ => bail!("Invalid response for outputs request"),
-		};
+		let socket = Socket::connect()?;
 
 		Ok(Self {
 			windows_waiting_for_resize: HashMap::new(),
 
 			map_image: Arc::new(Mutex::new(HashMap::new())),
 			map_image_token: Arc::new(Mutex::new(HashMap::new())),
-			outputs,
+			outputs: HashMap::new(),
 			socket,
 			stream_state: EventStreamState::default(),
 		})
@@ -93,6 +80,25 @@ impl State {
 		}
 
 		self.stream_state.apply(event);
+
+		// check if outputs have changed
+		for workspace in self.stream_state.workspaces.workspaces.values() {
+			if let Some(output) = workspace.output.as_ref()
+				&& self.outputs.get(output).is_none()
+			{
+				match self.update_outputs() {
+					Ok(opened_waybar) => {
+						// give waybar time to settle or else it fails to open map image
+						if opened_waybar {
+							sleep(Duration::from_secs(1));
+						}
+					}
+					Err(error) => println!("{error:?}"),
+				}
+
+				break;
+			}
+		}
 
 		let mut windows_to_maximize = Vec::new();
 
@@ -238,7 +244,7 @@ impl State {
 
 		let x_padding = 3;
 
-		let mut image = RgbaImage::new(300, image_height as u32);
+		let mut image = RgbaImage::new(600, image_height as u32);
 
 		for window in windows {
 			let Some((column_id, _)) = window.layout.pos_in_scrolling_layout else {
@@ -283,7 +289,7 @@ impl State {
 				&mut image,
 				0,
 				0,
-				(x - x_padding) as u32,
+				(x as u32).saturating_sub(x_padding as u32).max(1),
 				image_height as u32,
 			)
 			.to_image(),
@@ -325,11 +331,59 @@ impl State {
 				))
 				.expect("Could not save map");
 
-			let _ = Command::new("killall")
-				.arg("-s")
-				.arg("35")
-				.arg("waybar")
-				.output();
+			if let Ok(Some(waybar_pid)) = is_waybar_running_for_output(&output) {
+				let _ = Command::new("kill")
+					.arg("-s")
+					.arg("35")
+					.arg(waybar_pid)
+					.output();
+			}
 		});
+	}
+
+	fn update_outputs(&mut self) -> Result<bool> {
+		let Ok(response) = self.socket.send(Request::Outputs)? else {
+			bail!("Could not get outputs")
+		};
+
+		let mut old_outputs = self
+			.outputs
+			.keys()
+			.map(String::clone)
+			.collect::<Vec<_>>()
+			.clone();
+
+		self.outputs = match response {
+			Response::Outputs(outputs) => {
+				outputs
+					.into_values()
+					.fold(HashMap::new(), |mut map, output| {
+						map.insert(output.name.clone(), output);
+						map
+					})
+			}
+			_ => bail!("Invalid response for outputs request"),
+		};
+
+		let mut opened_waybar = false;
+
+		for new_output in self.outputs.keys() {
+			if let Some(index) = old_outputs.iter().position(|o| o == new_output) {
+				old_outputs.remove(index);
+			}
+
+			if is_waybar_running_for_output(&new_output)?.is_none() {
+				run_waybar_for_output(&new_output)?;
+				opened_waybar = true;
+			}
+		}
+
+		for old_output in old_outputs {
+			if let Some(pid) = is_waybar_running_for_output(&old_output)? {
+				kill_waybar(&pid)?;
+			}
+		}
+
+		Ok(opened_waybar)
 	}
 }
