@@ -324,6 +324,9 @@ impl State {
 			};
 
 			let home = std::env::var("HOME").unwrap_or("/home/me".into());
+
+			std::fs::create_dir_all(format!("{home}/.local/share/bansheeniri/"));
+
 			map_image
 				.save(format!(
 					"{home}/.local/share/bansheeniri/map.{}.png",
@@ -365,7 +368,7 @@ impl State {
 			_ => bail!("Invalid response for outputs request"),
 		};
 
-		let mut opened_waybar = false;
+		/*let mut opened_waybar = false;
 
 		for new_output in self.outputs.keys() {
 			if let Some(index) = old_outputs.iter().position(|o| o == new_output) {
@@ -382,8 +385,8 @@ impl State {
 			if let Some(pid) = is_waybar_running_for_output(&old_output)? {
 				kill_waybar(&pid)?;
 			}
-		}
+		}*/
 
-		Ok(opened_waybar)
+		Ok(true)
 	}
 }
